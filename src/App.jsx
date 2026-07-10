@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { generatePKCE } from './utils/pkce';
 
 function App() {
   // Config states (loaded from localStorage or defaults)
@@ -15,12 +16,15 @@ function App() {
   const [regRole, setRegRole] = useState('user');
 
   // Step state
-  const [activeStep, setActiveStep] = useState(1);
+  const [activeStep, setActiveStep] = useState(() => {
+    const saved = sessionStorage.getItem('oidc_active_step');
+    return saved ? parseInt(saved, 10) : 1;
+  });
   const [logs, setLogs] = useState([]);
 
   // Data states
   const [userToken, setUserToken] = useState(() => localStorage.getItem('oidc_user_token') || '');
-  const [authCode, setAuthCode] = useState('');
+  const [authCode, setAuthCode] = useState(() => sessionStorage.getItem('oidc_auth_code') || '');
   
   // Received Tokens
   const [accessToken, setAccessToken] = useState(() => sessionStorage.getItem('oidc_access_token') || '');
@@ -40,24 +44,38 @@ function App() {
     localStorage.setItem('oidc_scope', scope);
   }, [serverUrl, clientId, clientSecret, redirectUri, scope]);
 
+  // Sync step and authCode to sessionStorage
+  useEffect(() => {
+    sessionStorage.setItem('oidc_active_step', activeStep);
+  }, [activeStep]);
+
+  useEffect(() => {
+    sessionStorage.setItem('oidc_auth_code', authCode);
+  }, [authCode]);
+
   // Handle OIDC redirect callback on mount
   useEffect(() => {
-    console.log('activeStep--->>',activeStep);
+    console.log('activeStep--->>', activeStep);
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     if (code) {
       setAuthCode(code);
-      console.log('code from redirect callback-->>',code);
+      console.log('code from redirect callback-->>', code);
       setActiveStep(4);
       addLog(`Received authorization code from redirect callback: ${code}`, 'success');
       
       // Clean query params from URL bar
       const cleanUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
-    } else if (accessToken) {
-      setActiveStep(5);
-    } else if (userToken) {
-      setActiveStep(3);
+    } else {
+      const savedStep = sessionStorage.getItem('oidc_active_step');
+      if (!savedStep) {
+        if (accessToken) {
+          setActiveStep(5);
+        } else if (userToken) {
+          setActiveStep(3);
+        }
+      }
     }
   }, []);
 
@@ -98,7 +116,12 @@ function App() {
       const userData = await userRes.json();
       console.log('userData from setup-->>',userData);
       addLog(`User Registration Response: ${JSON.stringify(userData)}`, userRes.ok ? 'success' : 'error');
-
+      if(userData.message = "User already exists") {
+        setRegEmail("testuser@example.com");
+        setRegPassword("Password123!");
+        setRegRole("user");
+        setActiveStep(2);
+      }
       if (clientRes.ok && userRes.ok) {
         addLog('Setup completed successfully! Proceeding to Login step.', 'success');
         setActiveStep(2);
@@ -136,13 +159,24 @@ function App() {
   };
 
   // Step 3: Trigger redirect
-  const handleAuthorizeRedirect = () => {
+  const handleAuthorizeRedirect = async() => {
     if (!userToken) {
       console.log('error inside authorize redirect-->>',userToken);
       addLog('Error: User token missing. Login first.', 'error');
       return;
     }
-    const authUrl = `${serverUrl}/auth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&token=${encodeURIComponent(userToken)}`;
+    const pkce = await generatePKCE();
+    sessionStorage.setItem('pkce_code_verifier', pkce.codeVerifier);
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: scope,
+      token: userToken,
+      code_challenge: pkce.codeChallenege,
+      code_challenge_method: pkce.codeChallenegeMethod
+    });
+    const authUrl = `${serverUrl}/auth/authorize?${params.toString()}`;
+
     console.log('authUrl from authorize redirect-->>',authUrl);
     addLog(`Redirecting to: ${authUrl}`);
     window.location.href = authUrl;
@@ -235,7 +269,7 @@ function App() {
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async() => {
     sessionStorage.clear();
     localStorage.removeItem('oidc_user_token');
     setUserToken('');
