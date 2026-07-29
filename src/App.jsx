@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { generatePKCE } from './utils/pkce';
+import { createRemoteJWKSet, jwtVerify, decodeJwt } from 'jose';
+import { generateNonce, generatePKCE } from './utils/pkce';
 
 function App() {
   // Config states (loaded from localStorage or defaults)
@@ -166,14 +166,17 @@ function App() {
       return;
     }
     const pkce = await generatePKCE();
+    const nonce = await generateNonce();
     sessionStorage.setItem('pkce_code_verifier', pkce.codeVerifier);
+    sessionStorage.setItem('oidc_nonce', nonce)
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
       scope: scope,
       token: userToken,
       code_challenge: pkce.codeChallenege,
-      code_challenge_method: pkce.codeChallenegeMethod
+      code_challenge_method: pkce.codeChallenegeMethod,
+      nonce: nonce
     });
     const authUrl = `${serverUrl}/auth/authorize?${params.toString()}`;
 
@@ -193,10 +196,23 @@ function App() {
           code: authCode,
           client_id: clientId,
           client_secret: clientSecret,
+          code_verifier: sessionStorage.getItem('pkce_code_verifier'),
         }),
       });
       const data = await res.json();
+      console.log('data from token exchange-->>',data);
       if (res.ok) {
+        const expectedNonce = sessionStorage.getItem("oidc_nonce");
+        console.log('expectedNonce id token-->>',expectedNonce);
+        console.log('data.idToken-->>',data.idToken);
+        if (data.idToken && expectedNonce) {
+          const decoded = decodeJwt(data.idToken);
+          console.log('decoded id token-->>',decoded);
+          if (decoded.nonce !== expectedNonce) {
+            window.alert("Nonce mismatch!")
+            throw new Error("Nonce mismatch!");
+          }
+        }
         setAccessToken(data.accessToken);
         setIdToken(data.idToken);
         setRefreshToken(data.refreshToken);
@@ -204,6 +220,7 @@ function App() {
         sessionStorage.setItem('oidc_access_token', data.accessToken);
         sessionStorage.setItem('oidc_id_token', data.idToken);
         sessionStorage.setItem('oidc_refresh_token', data.refreshToken);
+        sessionStorage.removeItem("oidc_nonce");
 
         addLog('Token exchange successful!', 'success');
         setActiveStep(5);

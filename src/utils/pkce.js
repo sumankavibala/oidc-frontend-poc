@@ -15,3 +15,10 @@ function base64UrlEncode(buffer) {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
 }
+
+export function generateNonce() {
+  const random  = new Uint8Array(32)
+  const randomBytes = crypto.getRandomValues(random);
+  const randomString = base64UrlEncode(randomBytes);
+  return randomString;
+}
