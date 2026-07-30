@@ -25,7 +25,67 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          no-cache: true
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/oidc-frontend:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/oidc-frontend:${{ github.sha }}
+
+      - name: Sync Backend Service URL to Frontend Env Var on Render
+        run: |
+          if [ -n "${{ secrets.RENDER_API_KEY }}" ] && [ -n "${{ secrets.RENDER_BACKEND_SERVICE_ID }}" ]; then
+            echo "Fetching backend service URL from Render API..."
+            BACKEND_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+              "https://api.render.com/v1/services/${{ secrets.RENDER_BACKEND_SERVICE_ID }}" | grep -o '"url":"[^"]*' | head -n1 | cut -d'"' -f4)
+            
+            if [ -n "$BACKEND_URL" ]; then
+              echo "Fetched Backend URL: $BACKEND_URL"
+              echo "Updating VITE_API_SERVERURL on Frontend Render service..."
+              curl -s -X PUT -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                -H "Content-Type: application/json" \
+                -d "[{\"key\": \"VITE_API_SERVERURL\", \"value\": \"$BACKEND_URL\"}]" \
+                "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/env-vars"
+              echo -e "\nSuccessfully updated frontend env var on Render."
+            else
+              echo "Warning: Could not resolve backend URL from Render API."
+            fi
+          else
+            echo "Skipping backend URL sync (RENDER_API_KEY or RENDER_BACKEND_SERVICE_ID secret not set)."
+          fi
+
+      - name: Trigger Render Deploy & Wait
+
+        run: |
+          # Trigger deployment via deploy hook
+          response=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          if [ "$http_code" -ne 200 ] && [ "$http_code" -ne 201 ]; then
+            echo "Failed to trigger deploy. HTTP Status: $http_code"
+            echo "Response: $body"
+            exit 1
+          fi
+          
+          deploy_id=$(echo "$body" | grep -o '"id":"[^"]*' | head -n1 | cut -d'"' -f4)
+          echo "Deploy triggered successfully. Deploy ID: $deploy_id"
+          
+          # Poll deploy status using Render API until it succeeds or fails
+          if [ -n "$deploy_id" ] && [ -n "${{ secrets.RENDER_API_KEY }}" ]; then
+            echo "Waiting for deployment to complete..."
+            while true; do
+              sleep 10
+              status_res=$(curl -s -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys/$deploy_id")
+              status=$(echo "$status_res" | grep -o '"status":"[^"]*' | head -n1 | cut -d'"' -f4)
+              echo "Current status: $status"
+              if [ "$status" = "live" ]; then
+                echo "Deployment succeeded!"
+                break
+              elif [ "$status" = "build_failed" ] || [ "$status" = "update_failed" ] || [ "$status" = "canceled" ]; then
+                echo "Deployment failed with status: $status"
+                exit 1
+              fi
+            done
+          fi
+
