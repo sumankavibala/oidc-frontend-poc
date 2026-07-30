@@ -1,0 +1,72 @@
+name: PR AI Code Review & Docker Artifacts
+
+on: 
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  pr-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Extract PR Diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+
+      - name: Analyze Efficiency via Groq API
+        env: 
+          FREE_AI_API_KEY: ${{ secrets.FREE_AI_API_KEY }}
+        run: node .github/scripts/ai_review.cjs
+
+      - name: Ensure review.md Exists
+        run: |
+          if [ ! -f review.md ]; then
+            echo "### ⚡ PR Review" > review.md
+          fi
+
+      - name: Build Application in Docker
+        run: |
+          echo -e "\n\n---\n" >> review.md
+          if docker build -t oidc-frontend:latest . > docker_build.log 2>&1; then
+            echo "### 🐳 Docker Build Status" >> review.md
+            echo "✅ **Success:** Application built successfully in Docker." >> review.md
+          else
+            echo "### 🐳 Docker Build Status" >> review.md
+            echo "❌ **Failed:** Docker build encountered errors:" >> review.md
+            echo '```' >> review.md
+            tail -n 30 docker_build.log >> review.md
+            echo '```' >> review.md
+            exit 1
+          fi
+
+      - name: Save Docker Image to File
+        run: |
+          docker save -o oidc-frontend.tar oidc-frontend:latest
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-oidc-frontend
+          path: oidc-frontend.tar
+          retention-days: 7
+
+      - name: Post PR Comment
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: 'review.md'
