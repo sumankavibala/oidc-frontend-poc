@@ -4,7 +4,7 @@ import { generateNonce, generatePKCE } from './utils/pkce';
 
 function App() {
   // Config states (loaded from localStorage or defaults)
-  const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('oidc_server_url') || 'http://localhost:5000');
+  const [serverUrl, setServerUrl] = useState(import.meta.env.VITE_API_SERVERURL);
   const [clientId, setClientId] = useState(() => localStorage.getItem('oidc_client_id') || 'test-client-id');
   const [clientSecret, setClientSecret] = useState(() => localStorage.getItem('oidc_client_secret') || 'test-client-secret');
   const [redirectUri, setRedirectUri] = useState(() => localStorage.getItem('oidc_redirect_uri') || window.location.origin);
