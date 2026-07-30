@@ -3,8 +3,9 @@ const fs = require('fs');
 async function main() {
     const apiKey = process.env.FREE_AI_API_KEY;
     if (!apiKey) {
-        console.error('Error: FREE_AI_API_KEY secret is missing!');
-        process.exit(1);
+        console.warn('Warning: FREE_AI_API_KEY secret is missing!');
+        fs.writeFileSync('review.md', '### ⚡ AI Code Efficiency Report\n\n⚠️ **AI Review Skipped:** `FREE_AI_API_KEY` secret is not set in repository secrets.', 'utf8');
+        return;
     }
 
     let diffContent = 'No diff found.';
