@@ -10,8 +10,8 @@ RUN npm install
 # Copy application source code
 COPY . .
 
-# Build argument for Vite environment variable (default: http://localhost:5000)
-ARG VITE_API_SERVERURL=http://localhost:5000
+# Set placeholder during build so Vite bakes it into JS assets
+ARG VITE_API_SERVERURL=__VITE_API_SERVERURL_PLACEHOLDER__
 ENV VITE_API_SERVERURL=$VITE_API_SERVERURL
 
 # Build the production bundle
@@ -26,7 +26,12 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Copy build output to Nginx web root directory
 COPY --from=build-stage /app/dist /usr/share/nginx/html
 
+# Copy entrypoint script for runtime env replacement
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Expose HTTP port 80
 EXPOSE 80
 
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
